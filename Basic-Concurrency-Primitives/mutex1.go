@@ -45,6 +45,7 @@ func main2() {
 // main3 进一步封装
 func main3() {
 	var count counter
+
 	var wg sync.WaitGroup
 	wg.Add(10)
 	for i := 0; i < 10; i++ {
