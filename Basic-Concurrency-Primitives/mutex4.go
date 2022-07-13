@@ -57,8 +57,10 @@ func try() {
 	fmt.Println("can't get the lock")
 }
 
+// Count 统计数量
 func (m *Mutex) Count() int {
 	v := atomic.LoadInt32((*int32)(unsafe.Pointer(&m.Mutex)))
+	// 先右移3位
 	v = v>>mutexWaiterShift + (v & mutexLocked)
 	return int(v)
 }
@@ -72,6 +74,7 @@ func (m *Mutex) IsLocked() bool {
 // IsWoken 是否有等待者被唤醒
 func (m *Mutex) IsWoken() bool {
 	state := atomic.LoadInt32((*int32)(unsafe.Pointer(&m.Mutex)))
+	//位与运算
 	return state&mutexWoken == mutexWoken
 }
 

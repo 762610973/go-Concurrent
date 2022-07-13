@@ -2,6 +2,8 @@
 
 ## 基本并发原语
 
+![](/assets/IMG_0062.JPG)
+
 ### 同步原语的适用场景
 
 1. 共享资源。并发地读写共享资源，会出现数据竞争的问题，所以需要Mutex、RWMutex这样的并发原语来保护
@@ -151,4 +153,101 @@
 4. TryLock
    - 尝试获取锁，当一个goroutine调用这个TryLock方法请求锁的时候，如果这把锁没有被其他goroutine持有，这个goroutine就持有了这把锁，并返回true
    - 如果这把锁已经被其他goroutine持有，或者是正在准备交给某个唤醒的goroutine，那么请求锁的goroutine就直接返回false，不会阻塞在方法调用上
+5. 获取当前等待mutex的goroutine的数量
+6. 查看是否饥饿、被持有、唤醒、线程安全的队列
+```go
+import (
+	"fmt"
+	"sync"
+	"sync/atomic"
+	"time"
+	"unsafe"
+)
 
+const (
+	mutexLocked      = 1 << iota //加锁标识位置
+	mutexWoken                   //唤醒标识位置
+	mutexStaving                 //锁饥饿标识位置
+	mutexWaiterShift = iota      //标识waiter的起始bit位置
+)
+
+type Mutex struct {
+	sync.Mutex
+}
+
+// TryLock 尝试获取锁
+func (m *Mutex) TryLock() bool {
+	//如果能成功抢到锁
+	if atomic.CompareAndSwapInt32((*int32)(unsafe.Pointer(&m.Mutex)), 0, mutexLocked) {
+		return true
+	}
+	// 如果处于唤醒、加锁或者饥饿状态，这次请求就不参与竞争了，返回false
+	old := atomic.LoadInt32((*int32)(unsafe.Pointer(&m.Mutex)))
+	if old&(mutexLocked|mutexStaving|mutexWoken) != 0 {
+		return false
+	}
+	new := old | mutexLocked
+	return atomic.CompareAndSwapInt32((*int32)(unsafe.Pointer(&m.Mutex)), old, new)
+}
+
+// Count 统计数量
+func (m *Mutex) Count() int {
+	v := atomic.LoadInt32((*int32)(unsafe.Pointer(&m.Mutex)))
+	// 先右移3位
+	v = v>>mutexWaiterShift + (v & mutexLocked)
+	return int(v)
+}
+
+// IsLocked 锁是否被持有
+func (m *Mutex) IsLocked() bool {
+	state := atomic.LoadInt32((*int32)(unsafe.Pointer(&m.Mutex)))
+	return state&mutexLocked == mutexLocked
+}
+
+// IsWoken 是否有等待者被唤醒
+func (m *Mutex) IsWoken() bool {
+	state := atomic.LoadInt32((*int32)(unsafe.Pointer(&m.Mutex)))
+	//位与运算
+	return state&mutexWoken == mutexWoken
+}
+
+// IsStarving 锁是否处于饥饿状态
+func (m *Mutex) IsStarving() bool {
+	state := atomic.LoadInt32((*int32)(unsafe.Pointer(&m.Mutex)))
+	return state&mutexStaving == mutexStaving
+}
+
+// 线程安全的队列
+type SliceQueue struct {
+	mu   sync.Mutex
+	data []interface{}
+}
+
+func NewSliceQueue(n int) (q *SliceQueue) {
+	return &SliceQueue{
+		mu:   sync.Mutex{},
+		data: make([]interface{}, 0, n),
+	}
+}
+
+// Enqueue 添加到队尾
+func (q *SliceQueue) Enqueue(v interface{}) {
+	q.mu.Lock()
+	q.data = append(q.data, v)
+	q.mu.Unlock()
+}
+
+// Dequeue 移除队头并返回
+func (q *SliceQueue) Dequeue() interface{} {
+	q.mu.Lock()
+	if len(q.data) == 0 {
+		q.mu.Unlock()
+		return nil
+	}
+	v := q.data[0]
+	q.data = q.data[1:]
+	q.mu.Unlock()
+	return v
+}
+
+```
